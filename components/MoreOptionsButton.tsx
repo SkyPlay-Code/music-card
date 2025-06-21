@@ -47,11 +47,12 @@ const MoreOptionsButton: React.FC<MoreOptionsButtonProps> = ({ songSrc, songTitl
   };
 
   const handleCopyLink = () => {
-    navigator.clipboard.writeText(window.location.origin + songSrc).then(() => {
-      alert("Song link copied!"); // Consider a less obtrusive notification
+    const spotifyLink = 'https://open.spotify.com/track/47UFoOuvrkt4khE7c5aap6?si=ccc487271f7c464d';
+    navigator.clipboard.writeText(spotifyLink).then(() => {
+      alert("Spotify link copied!"); // Consider a less obtrusive notification
     }).catch(err => {
       console.error('Failed to copy link: ', err);
-      alert("Failed to copy link.");
+      alert("Failed to copy Spotify link.");
     });
     setIsOpen(false);
   };
