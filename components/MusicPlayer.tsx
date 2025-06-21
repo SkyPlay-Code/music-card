@@ -1,5 +1,6 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import ColorThief from 'colorthief';
 import { Song, DynamicColors, AudioVisualizerData } from '../types';
 import AlbumArtDisplay from './AlbumArtDisplay';
 import SongInformation from './SongInformation';
@@ -26,34 +27,28 @@ const MusicPlayer: React.FC<MusicPlayerProps> = ({ initialSong, initialColors })
   const sourceRef = useRef<MediaElementAudioSourceNode | null>(null);
   const animationFrameIdRef = useRef<number | null>(null);
 
-  // Apply dynamic colors as CSS variables to the player's root
   const playerStyle: React.CSSProperties = {
     '--c-primary': colors.primary,
     '--c-secondary': colors.secondary,
     '--c-glow': colors.glow,
-    '--font-color': colors.font, // Used by child components for text
+    '--font-color': colors.font,
   } as React.CSSProperties;
 
   const setupAudioContext = useCallback(() => {
     if (!audioRef.current || audioContextRef.current) return;
-
     const context = new (window.AudioContext || (window as any).webkitAudioContext)();
     audioContextRef.current = context;
-    
     const analyser = context.createAnalyser();
-    analyser.fftSize = 256; // Matching original script
+    analyser.fftSize = 256;
     analyserRef.current = analyser;
-
     if (!sourceRef.current) {
          sourceRef.current = context.createMediaElementSource(audioRef.current);
          sourceRef.current.connect(analyser);
          analyser.connect(context.destination);
     }
-   
     const bufferLength = analyser.frequencyBinCount;
     const dataArray = new Uint8Array(bufferLength);
     setVisualizerData({ bufferLength, dataArray });
-
   }, []);
 
   const visualizerLoop = useCallback(() => {
@@ -61,17 +56,10 @@ const MusicPlayer: React.FC<MusicPlayerProps> = ({ initialSong, initialColors })
       animationFrameIdRef.current = requestAnimationFrame(visualizerLoop);
       return;
     }
-
     analyserRef.current.getByteFrequencyData(visualizerData.dataArray);
-    // Force a re-render by creating a new object for dataArray if needed, or rely on AudioVisualizer to pick up changes.
-    // For simplicity, we assume AudioVisualizer re-renders if its props change identity or if it internally manages its animation.
-    // Here, we just ensure dataArray is updated. The AudioVisualizer component will use this data.
     setVisualizerData(prev => prev ? { ...prev, dataArray: new Uint8Array(visualizerData.dataArray) } : null);
-
-
     animationFrameIdRef.current = requestAnimationFrame(visualizerLoop);
   }, [visualizerData]);
-
 
   useEffect(() => {
     if (isPlaying && visualizerData) {
@@ -89,44 +77,58 @@ const MusicPlayer: React.FC<MusicPlayerProps> = ({ initialSong, initialColors })
         cancelAnimationFrame(animationFrameIdRef.current);
       }
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPlaying, visualizerLoop, visualizerData]); // visualizerLoop is memoized
+  }, [isPlaying, visualizerLoop, visualizerData]);
 
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
-
     const handleLoadedMetadata = () => setDuration(audio.duration);
     const handleTimeUpdate = () => setCurrentTime(audio.currentTime);
     const handleEnded = () => setIsPlaying(false);
-
     audio.addEventListener('loadedmetadata', handleLoadedMetadata);
     audio.addEventListener('timeupdate', handleTimeUpdate);
     audio.addEventListener('ended', handleEnded);
-
-    // Initial setup if audio is already loaded (e.g. src changed)
-    if (audio.readyState >= 1) { // HAVE_METADATA
+    if (audio.readyState >= 1) {
         handleLoadedMetadata();
     }
-    
     return () => {
       audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
       audio.removeEventListener('timeupdate', handleTimeUpdate);
       audio.removeEventListener('ended', handleEnded);
     };
-  }, [song.src]); // Re-attach if song source changes
+  }, [song.src]);
 
+  const handleImageLoadForColorExtraction = useCallback((imgElement: HTMLImageElement) => {
+    try {
+      const colorThief = new ColorThief();
+      const palette = colorThief.getPalette(imgElement, 2); // Get 2 colors
+      if (palette && palette.length >= 2) {
+        const primaryRgb = palette[0];
+        const secondaryRgb = palette[1];
+        setColors({
+          primary: `rgb(${primaryRgb[0]}, ${primaryRgb[1]}, ${primaryRgb[2]})`,
+          secondary: `rgb(${secondaryRgb[0]}, ${secondaryRgb[1]}, ${secondaryRgb[2]})`,
+          glow: `rgba(${primaryRgb[0]}, ${primaryRgb[1]}, ${primaryRgb[2]}, 0.7)`,
+          font: initialColors.font, // Keep font static or make it dynamic too
+        });
+      } else {
+         console.warn("ColorThief could not extract a palette, using fallback colors.");
+         setColors(initialColors);
+      }
+    } catch (error) {
+      console.error('Error extracting colors with ColorThief:', error);
+      setColors(initialColors); // Fallback to initial colors on error
+    }
+  }, [initialColors]); // initialColors is stable
 
   const togglePlay = useCallback(() => {
     if (!audioRef.current) return;
     if (!audioContextRef.current) {
-      setupAudioContext(); // Setup on first user interaction
+      setupAudioContext();
     }
-
     if (isPlaying) {
       audioRef.current.pause();
     } else {
-       // Resume AudioContext if it was suspended
       if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
         audioContextRef.current.resume();
       }
@@ -142,49 +144,57 @@ const MusicPlayer: React.FC<MusicPlayerProps> = ({ initialSong, initialColors })
     }
   };
 
-  // Placeholder for future color extraction logic
-  // useEffect(() => {
-  //   // Some logic to extract colors from song.cover
-  //   // e.g., using a library like color-thief
-  //   // then setColors(newExtractedColors);
-  // }, [song.cover]);
+  useEffect(() => {
+    // Reset song-specific state when song changes
+    setCurrentTime(0);
+    setDuration(0);
+    setIsPlaying(false);
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.load(); // Important to load new src
+    }
+    // Colors will be updated by handleImageLoadForColorExtraction via AlbumArtDisplay's onLoad
+  }, [song.id]);
 
 
   return (
     <>
-      {/* Aurora Background - Positioned outside the card but uses its colors */}
       <div 
         className="fixed inset-0 w-full h-full opacity-30 blur-[100px] animate-aurora-flow -z-10"
         style={{
           background: `radial-gradient(circle at 20% 20%, var(--c-primary), transparent 50%),
                       radial-gradient(circle at 80% 70%, var(--c-secondary), transparent 50%)`,
-          ...playerStyle /* To ensure CSS vars are available */
+          ...playerStyle
         }}
       />
 
       <div 
         style={playerStyle}
-        className={`relative w-80 p-[25px] rounded-[30px] bg-[#161120]/40 backdrop-blur-[25px] border border-white/10 shadow-[0_15px_35px_rgba(0,0,0,0.3)] flex flex-col items-center gap-5 transition-shadow duration-300 ease-in-out z-10 ${isPlaying ? 'shadow-[0_0_45px_var(--c-glow)]' : ''} text-[var(--font-color)]`}
+        className={`relative w-80 p-[25px] rounded-[30px] bg-[#161120]/40 backdrop-blur-[25px] border border-white/10 shadow-[0_15px_35px_rgba(0,0,0,0.3)] flex flex-col items-center gap-4 transition-shadow duration-300 ease-in-out z-10 ${isPlaying ? 'shadow-[0_0_45px_var(--c-glow)]' : ''} text-[var(--font-color)]`}
       >
         <AudioVisualizer 
             data={visualizerData} 
             isPlaying={isPlaying} 
             colors={colors}
         />
-        <MoreOptionsButton />
+        <MoreOptionsButton 
+          songSrc={song.src}
+          songTitle={song.title}
+          songArtist={song.artist}
+        />
         
         <AlbumArtDisplay 
             song={song} 
-            currentTime={currentTime} 
-            duration={duration} 
+            onImageLoad={handleImageLoadForColorExtraction}
         />
         <SongInformation title={song.title} artist={song.artist} />
+        {/* Linear Progress Bar is now part of PlayerControls */}
         <PlayerControls
             isPlaying={isPlaying}
             onPlayPause={togglePlay}
             currentTime={currentTime}
             duration={duration}
-            // onSeek={handleSeek} // Progress bar interaction can be added here
+            onSeek={handleSeek}
         />
         <audio ref={audioRef} src={song.src} crossOrigin="anonymous" className="hidden"></audio>
       </div>
